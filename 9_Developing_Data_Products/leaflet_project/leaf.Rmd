@@ -1,0 +1,31 @@
+---
+title: "Large Cities in India Colored by Region"
+author: "Sean Angiolillo"
+date: "1/11/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r message=FALSE}
+cities <- data.frame(name = c("Mumbai","Delhi","Bengaluru","Chennai", "Kolkata","Ahmedabad","Hyderabad","Lucknow"),
+                     pop = c(12442373, 11034555, 8443675, 4646732, 4496694,5577940,6993262,2817105),
+                     lat = c(19.0825223,28.5275198,12.9542946,13.0478223,22.6763858,23.0204978,17.4126274,26.8488279),
+                     lng = c(72.7411001,77.0688997,77.4908532,80.0689255,88.0495365,72.4396568,78.2679594,80.8724724),
+                     Region = c("West", "North", "South", "South","East","West","South","North"))
+
+library(leaflet) 
+factpal <- colorFactor(topo.colors(4), cities$Region)
+cities %>%
+  leaflet() %>%
+  addTiles() %>%
+  addCircles(weight = 1, radius = sqrt(cities$pop) * 30, 
+             color = ~factpal(Region)) %>%
+  addLegend(pal = factpal, values = ~Region)
+```    
+
+
+
+

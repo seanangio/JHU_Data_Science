@@ -1,0 +1,57 @@
+---
+title: "Week 3 Assignment: Plotly"
+author: "Sean Angiolillo"
+date: "1/12/2018"
+output: ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Plotting Films by Audience and Critic Scores
+
+- Taking a dataset of movies, I've plotted films based on their audience and critic scores. The plot further distinguishes films by whether or not they won an Oscar and whether or not the film reached the top 200 of the Box Office. 
+- The plot shows that there is a weaker relationship than one might expect between all of these variables. 
+- See GitHub for the code and data.
+
+## Plotly Plot
+
+```{r films, echo=FALSE, message=FALSE}
+library(dplyr)
+library(plotly)
+# load the data
+if (!file.exists("movies.Rdata")) {
+    url <- "https://d3c33hcgiwev3.cloudfront.net/_e1fe0c85abec6f73c72d73926884eaca_movies.Rdata?Expires=1504137600&Signature=SBRZ0CfeUcGItpNcIWTzHkmLQrU3sPGugl7uOUOZbyxze9kBLctsy0HpUj77uuwjr-Up6f58JBU0tX4VYbRc~fFJKbZ-yMM3u5zMpUPV3NX4oRQOyG~mxCv4TGDoVOCctkrtFyu5ToHb6Lw0~rLKq7abUjiMwPgw2WPS5lY770g_&Key-Pair-Id=APKAJLTNE6QMUY6HBC5A"
+    download.file(url, dest = "movies.Rdata", mode = "wb") 
+}
+load("movies.Rdata")
+
+# filter a revised dataset
+films <- filter(movies, title_type == "Feature Film",
+                mpaa_rating != "NC-17")
+# create oscar factor variable
+films$oscar <- ifelse(
+                films$best_pic_win == "yes" |
+                films$best_actor_win == "yes" |
+                films$best_actress_win == "yes" |
+                films$best_dir_win == "yes", "Oscar", "No Oscar")
+films$oscar <- factor(films$oscar)
+
+films$box_office <- ifelse(films$top200_box == "yes", "Box Office 200", "Above 200")
+
+# built with plotly
+x <- list(title = "Critic Score", dtick = 20)
+y <- list(title = "Audience Score", dtick = 20)
+p <- plot_ly(films, x = ~critics_score, y = ~audience_score,
+        mode = "markers", type = "scatter",
+        color = films$oscar,
+        colors = "Set2",
+        symbol = ~box_office,
+        symbols = c("o","x"),
+        text = ~title) %>%
+    layout(title = "Films by Oscar and Box Office Performance", 
+           xaxis = x, yaxis = y)
+p
+```
+
