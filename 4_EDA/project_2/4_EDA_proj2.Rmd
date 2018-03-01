@@ -1,0 +1,390 @@
+---
+title: "4_EDA_proj2"
+output: 
+  html_document: 
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Project 2
+
+```{r}
+# download the file
+url <- "https://d396qusza40orc.cloudfront.net/exdata%2Fdata%2FNEI_data.zip"
+download(url, dest = "nei_data.zip", mode = "wb") 
+unzip("nei_data.zip", exdir = "./")
+```
+
+```{r}
+# read files into dataframes
+NEI <- readRDS("summarySCC_PM25.rds")
+SCC <- readRDS("Source_Classification_Code.rds")
+```
+
+
+## 1
+Have total emissions from PM2.5 decreased in the United States from 1999 to 2008? Using the base plotting system, make a plot showing the total PM2.5 emission from all sources for each of the years 1999, 2002, 2005, and 2008.
+
+```{r}
+tapply_total <- tapply(NEI$Emissions, NEI$year, FUN = sum)
+```
+
+```{r}
+# create a dataframe of summed Emissions, grouped by year
+total_US <- NEI %>%
+    group_by(year) %>%
+    summarise(sumE = sum(Emissions))
+```
+
+```{r}
+# plot 1
+png("plot1.png")
+par(mar = c(5.1, 5.1, 4.1, 2.1))
+barplot(total_US$sumE/10^6, 
+        xlab = "Year",
+        names.arg = total_US$year,
+        ylab = expression(PM[2.5]*" Emissions (10^6 Tons)"),
+        main = expression("Total U.S. "*PM[2.5]*" Emissions"))
+dev.off()
+```
+
+
+
+
+
+
+
+## 2
+Have total emissions from PM2.5 decreased in the Baltimore City, Maryland (𝚏𝚒𝚙𝚜 == "𝟸𝟺𝟻𝟷𝟶") from 1999 to 2008? Use the base plotting system to make a plot answering this question.
+
+```{r}
+# filter dataset
+NEI_bmc <- NEI %>%
+          filter(fips == "24510")
+```
+
+```{r}
+# create a dataframe of summed Emissions, grouped by year
+total_bmc <- NEI_bmc %>%
+    group_by(year) %>%
+    summarise(sumE = sum(Emissions))
+```
+
+```{r}
+# plot 2
+png("plot2.png")
+par(mar = c(5.1, 5.1, 4.1, 2.1))
+barplot(total_bmc$sumE,
+        xlab = "Year",
+        names.arg = total_bmc$year,
+        ylab = expression(PM[2.5]*" Emissions (Tons)"),
+        main = expression("Total Baltimore City, MD "*PM[2.5]*" Emissions"))
+dev.off()
+```
+
+```{r}
+class(NEI$fips)
+NEI$fips <- as.factor(NEI$fips)
+class(NEI$fips)
+```
+
+
+```{r}
+NEI_2 <- NEI %>%
+            filter(fips == 24510) %>%
+            group_by(year) %>%
+            summarise(sumEmissions = sum(Emissions))
+            
+```
+
+```{r}
+# plot 2
+barplot(table(NEI_2$sumEmissions, NEI_2$year))
+```
+
+
+
+
+## 3
+Of the four types of sources indicated by the 𝚝𝚢𝚙𝚎 (point, nonpoint, onroad, nonroad) variable, which of these four sources have seen decreases in emissions from 1999–2008 for Baltimore City? Which have seen increases in emissions from 1999–2008? Use the ggplot2 plotting system to make a plot answer this question.
+
+```{r}
+class(NEI_bmc$type)
+NEI_bmc$type <- as.factor(NEI_bmc$type)
+class(NEI_bmc$type)
+```
+
+
+```{r}
+NEI_bmc_t <- NEI_bmc %>%
+  group_by(type, year) %>%
+  summarise(sumE = sum(Emissions))
+```
+
+```{r}
+NEI_bmc_t
+```
+
+```{r}
+# plot 3
+png("plot3.png")
+ggplot(data = NEI_bmc_t, 
+      aes(x = year, y = sumE)) +
+      geom_bar(stat = "identity") + 
+      facet_grid(. ~ type) +
+  labs(title = "title", x = "Year", y = "text")
+dev.off()
+```
+
+
+
+## 4
+
+Across the United States, how have emissions from coal combustion-related sources changed from 1999–2008?
+
+
+```{r}
+# filter SCC for any mention of coal
+SCC_coal <- SCC %>%
+  filter(grepl('[Cc]oal', SCC$Short.Name) |
+         grepl('[Cc]oal', SCC$EI.Sector) |
+         grepl('[Cc]oal', SCC$SCC.Level.Three) |
+         grepl('[Cc]oal', SCC$SCC.Level.Four))
+```
+
+```{r}
+# filter NEI for any sources found in SCC_coal
+NEI_coal <- NEI %>%
+  filter(SCC %in% SCC_coal$SCC)
+```
+
+```{r}
+# sum emissions
+NEI_cs <- NEI_coal %>%
+    group_by(year) %>%
+    summarise(sumE = sum(Emissions))
+```
+
+```{r}
+# plot 4
+png("plot4.png")
+par(mar = c(5.1, 5.1, 4.1, 2.1))
+barplot(NEI_cs$sumE/10^3, NEI_cs$year,
+        xlab = "Year",
+        names.arg = NEI_cs$year,
+        main = "U.S. Emissions from Coal Combustion Sources",
+        ylab = expression(PM[2.5]*" Emissions (Thousands Tons)"))
+dev.off()
+```
+
+## 5
+How have emissions from motor vehicle sources changed from 1999–2008 in Baltimore City?
+
+```{r}
+# filter for BCM
+```
+
+
+```{r}
+# filter SCC for onroad
+onroad <- SCC %>%
+    filter(Data.Category == "Onroad")
+```
+
+```{r}
+# filter BMC for onroad SCC
+NEI_bmb_onroad <- NEI_bmc %>%
+  filter(SCC %in% onroad$SCC)
+```
+
+```{r}
+# summarise
+NEI_bmb_road_sum <- NEI_bmb_onroad %>%
+  group_by(year) %>%
+  summarise(sumE = sum(Emissions))
+```
+
+```{r}
+# plot 5
+#png("plot5.png")
+par(mar = c(5.1, 5.1, 4.1, 2.1))
+barplot(NEI_bmb_road_sum$sumE, NEI_bmb_road_sum$year,
+        xlab = "Year",
+        names.arg = NEI_cs$year,
+        main = "title",
+        ylab = expression(PM[2.5]*" Emissions (Thousands Tons)"))
+#dev.off()
+```
+
+
+## 6
+Compare emissions from motor vehicle sources in Baltimore City with emissions from motor vehicle sources in Los Angeles County, California (𝚏𝚒𝚙𝚜 == "𝟶𝟼𝟶𝟹𝟽"). Which city has seen greater changes over time in motor vehicle emissions?
+```{r}
+# filter SCC for onroad
+onroad <- SCC %>%
+    filter(Data.Category == "Onroad")
+```
+
+```{r}
+# filter NEI for BMC and LAC
+bmc_lac <- NEI %>%
+  filter(fips == "06037" | fips == "24510")
+```
+
+```{r}
+# filter bmc_lac for onroad SCC
+bmc_lac_onroad <- bmc_lac %>%
+  filter(SCC %in% onroad$SCC)
+```
+
+
+```{r}
+# summarise
+bmc_lac_onroad_sum <- bmc_lac_onroad %>%
+  group_by(year, fips) %>%
+  summarise(sumE = sum(Emissions))
+```
+
+```{r}
+View(bmc_lac_onroad_sum)
+```
+
+```{r}
+qplot(x = year, y = sumE, data = bmc_lac_onroad_sum, facets = .~fips)
+```
+
+```{r}
+qplot(x = year, y = sumE, data = bmc_lac_onroad_sum, color = fips) + geom_line()
+```
+
+```{r}
+ggplot(data = bmc_lac_onroad_sum, aes(x = year, y = sumE, color = fips)) + geom_line()
+```
+
+
+```{r}
+# plot 5
+#png("plot5.png")
+par(mar = c(5.1, 5.1, 4.1, 2.1))
+barplot(NEI_bmb_road_sum$sumE, NEI_bmb_road_sum$year,
+        xlab = "Year",
+        names.arg = NEI_cs$year,
+        main = "title",
+        ylab = expression(PM[2.5]*" Emissions (Thousands Tons)"))
+#dev.off()
+
+```
+
+```{r}
+# read files into dataframes
+if (!exists("NEI")) {
+  NEI <- readRDS("summarySCC_PM25.rds")
+}
+if (!exists("SCC")) {
+  SCC <- readRDS("Source_Classification_Code.rds")
+}
+
+# filter dataset for only Baltimore City, MD
+bcm <- NEI %>%
+  filter(fips == "24510")
+
+# convert type variable from character to factor
+bcm$type <- as.factor(bcm$type)
+
+# convert
+bcm$year <- as.factor(as.character(bcm$year))
+
+# create a dataframe of summed Emissions for bcm, grouped by year and type
+bcm_type <- bcm %>%
+  group_by(type, year) %>%
+  summarise(sumE = sum(Emissions))
+
+# plot 3
+#png("plot3.png")
+ggplot(data = bcm_type, 
+       aes(x = year, y = sumE)) +
+  geom_bar(stat = "identity") + 
+  facet_grid(. ~ type) +
+  xlab("Year") +
+  ylab(expression(PM[2.5]*" Emissions (Tons)")) +
+  ggtitle('Baltimore City, MD Emissions by Type') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+class(bcm_type$year)
+```
+
+
+```{r}
+ggplot(data = bcm_type, 
+       aes(x = year, y = sumE)) +
+  geom_bar(stat = "identity") + 
+  facet_grid(. ~ type) +
+  xlab("Year") +
+  ylab(expression(PM[2.5]*" Emissions (Tons)")) +
+  ggtitle('Baltimore City, MD Emissions by Type') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+barplot(bcm_road_sum$sumE, bcm_road_sum$year,
+        xlab = "Year",
+        names.arg = bcm_road_sum$year,
+        main = "Emissions from Motor Vehicle Sources in Baltimore City, MD",
+        ylab = expression(PM[2.5]*" Emissions (Tons)"))
+```
+
+```{r}
+ggplot(data = bcm_road_sum,
+       aes(x = year, y = sumE)) +
+  geom_bar(stat = "identity")
+```
+
+```{r}
+
+# filter SCC for onroad
+onroad <- SCC %>%
+  filter(Data.Category == "Onroad")
+
+# filter NEI for BCM and LAC
+bcm_lac <- NEI %>%
+  filter(fips == "06037" | fips == "24510")
+
+# filter bmc_lac for onroad SCC
+bcm_lac_road <- bcm_lac %>%
+  filter(SCC %in% onroad$SCC)
+
+# create a dataframe of summed Emissions, grouped by year and county
+bcm_lac_road_sum <- bcm_lac_road %>%
+  group_by(year, fips) %>%
+  summarise(sumE = sum(Emissions))
+
+# plot 6
+png("plot6.png")
+qplot(x = year, y = sumE, 
+      data = bcm_lac_road_sum, 
+      color = factor(fips, labels = c("LAC", "BCM"))) + 
+      labs(color = "County") +
+      geom_line() +
+      xlab("Year") +
+      ylab(expression(PM[2.5]*" Emissions (Tons)")) +
+      ggtitle('Baltimore City, MD and Los Angeles County, CA Emissions by Type') +
+      theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+```
+
+```{r}
+library(lubridate)
+sample <- c("1999", "2004", "2007")
+#class(sample)
+sample <- years(sample)
+class(sample)
+```
+
