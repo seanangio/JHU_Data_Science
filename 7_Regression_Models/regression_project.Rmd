@@ -1,0 +1,605 @@
+---
+title: 'Linear Regression: Consequences of Automatic vs. Manual Transmission for Fuel
+  Efficiency'
+author: "Sean Angiolillo"
+date: '2017-11-23'
+output:
+  html_document: 
+    keep_md: yes
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+## Executive Summary
+
+In this project we have been asked to investigate two questions concerning the `mtcars` dataset:
+
+1. Is an automatic or manual transmission better for MPG?
+
+2. Quantify the MPG difference between automatic and manual transmissions.
+
+These seemingly simple questions yield very different answers depending on how we choose to model the given data. In this investigation, I'll explore answers to these questions based on a number of different models.
+
+* In a simple model considering only miles per gallon (`mpg`) and `transmission` (transformed from `am`), we expect a car with a manual transmission to gain an extra 7.24 +/- 3.60 miles per gallon more in fuel efficiency than a car with an automatic transmission.
+
+* In a parallel slopes model predicting `mpg` from `transmission` and now the additional variable of weight (`wt`), we expect a car with a manual transmission to gain an extra -0.02 +/- 3.16 miles per gallon in fuel efficiency than a car with an automatic transmission, holding `wt` constant (or essentially no expected difference).
+
+* In the same model but allowing for interaction between `wt` and `transmission`, the expected difference in `mpg` between automatic and manual transmission cars varies as `wt` changes. Holding `wt` constant, for cars greater than approximately 2800 lbs, we expect an automatic transmission car to receive higher `mpg`, whereas for a car lighter than 2800 lbs we would expect a manual transmission car to receive higher `mpg`. 
+
+* After exploring all possible variables for model inclusion, we settled upon a parsimonious model with three explanatory variables (`wt`,  quarter mile time `qsec`, and `transmission`) able to explain 85% of the total variation in `mpg`. Under this model, holding `wt` and `qsec` constant, we expect cars with a manual transmission to get an extra 2.94 +/- 2.89 miles per gallon over cars with an automatic transmission.
+
+Overall, we can conclude that a manual transmission does seem to be a better option than an automatic transmission in terms of miles per gallon, but the magnitude of this difference is tempered if we regress out the effects of a car's weight and quarter mile time.
+
+## Exploratory Data Analysis
+
+```{r message=FALSE}
+# load data and libraries
+data("mtcars")
+library(ggplot2)
+library(dplyr)
+library(datasets)
+library(knitr)
+library(GGally)
+library(car)
+```
+
+We could start by calculating summary statistics comparing cars with automatic and manual transmissions in terms of `mpg`. I'll first create a new variable to make our labels more interpretable in plots.
+
+```{r}
+# create a new column
+mtcars$transmission <- NA
+
+# copy the data from the existing column into the new one
+mtcars$transmission <- mtcars$am
+
+# recode data to shorter labels, keeping factor order
+mtcars$transmission <- dplyr::recode(mtcars$transmission, `0` = 'Automatic', `1` = 'Manual')
+
+# make it a factor variable
+mtcars$transmission <- as.factor(mtcars$transmission)
+
+# summary statistics table
+table <- mtcars %>%
+    group_by(transmission) %>%
+    summarise(n = n(),
+              min = min(mpg),
+              q1 = quantile(mpg, 0.25),
+              median = median(mpg),
+              mean_mpg = mean(mpg),
+              q3 = quantile(mpg, 0.75),
+              max = max(mpg),
+              sd_mpg = sd(mpg))
+kable(table, align = 'c', digits = 3)
+```
+
+Then let's examine a boxplot overlaid with a dotplot to visualize where the data lie in terms of `mpg` and `transmission`.
+
+```{r message=FALSE}
+# plot mpg by transmission
+ggplot(mtcars, aes(y = mpg, x = transmission)) + 
+    geom_boxplot() +
+    geom_dotplot(binaxis = 'y', stackdir = 'center', fill = 'red') +
+    labs(x = "Transmission", y = "Miles Per Gallon (MPG)",
+         title = "Miles Per Gallon (MPG) by Transmission")
+```
+
+The plot suggests that cars with manual transmissions tend to perform better in terms of `mpg`. Q1, the median and Q3 are all higher for cars with manual transmissions. In fact, Q1 of manual transmission cars is greater than Q3 of automatic transmission cars. 
+
+However, the actual data points themselves show us that this is by no means always the case. As confirmed by the table, the variance among cars with manual transmissions is greater than those with automatic transmissions. There are examples of automatic cars in the dataset with higher `mpg` than manual cars. 
+
+Comparing histograms is another way to show the overlap in distributions despite manual transmissions having an advantage.
+
+```{r}
+# mutate a mean mpg variable by group
+mtcars <- mtcars %>%
+    group_by(transmission) %>%
+    mutate(mean_mpg = mean(mpg))
+
+# comparative histogram
+ggplot(mtcars, aes(x = mpg)) +
+    geom_histogram(binwidth = 1.5) +
+    facet_wrap(~ transmission, nrow = 2) +
+    geom_vline(aes(xintercept = mean_mpg), col = 'red') +
+    labs(x = "Miles Per Gallon (MPG)", y = "Frequency",
+         title = "Histograms of MPG by Transmission",
+         subtitle = "Group mean plotted in red")
+```
+
+Accordingly, we could try to answer the question of whether a manual transmission is 'better' for `mpg` than an automatic transmission by creating a hypothesis test in order to determine whether this perceived advantage among manual transmission cars can be attributed to random chance. At the same time, by creating a confidence interval we will be able to quantify the MPG difference between automatic and manual transmissions (Question 2).
+
+## Inference
+
+### Null and Alternative Hypotheses
+
+Our null hypothesis is that the mean `mpg` for automatic transmission cars is equal to that of manual transmission cars. Our alternative hypothesis is that the mean `mpg` for cars with a manual transmission is greater than that of cars with automatic transmissions.
+
+### Assumptions
+
+Before running such a test, we should evaluate to see if our data matches the required conditions to employ such a test.
+
+* We require a bivariate explanatory variable, in this case `transmission`. As there are only two choices of transmission, this is clearly met.
+
+* We require a continuous response variable, in this case `mpg`. This is also met as `mpg` is a numeric variable.
+
+* Observations must be independent. We do not know how exactly Motor Trend magazine selected these cars for inclusion in the sample, but for this purpose, we can treat it as a random sample and assume independence.
+
+* Data should have a normal distribution with the same variance in each group. Our normal quantile plot below and histograms above suggest that the data, while not heavily skewed, is not sufficiently normal.
+
+```{r}
+# normal quantile plot
+qqnorm(mtcars$mpg)
+qqline(mtcars$mpg)
+```
+
+However, our general rule of thumb is that sample sizes of more than 30 cross into the domain of the Central Limit Theorem. At a sample size of `r nrow(mtcars)`, we just meet this threshold.
+
+### Independent Sample T-Test
+
+With these conditons more or less satisfied, let's perform an independent sample, one-sided t-test to compare `mpg` of automatic and manual transmission cars, based on the null hypothesis above.
+
+```{r}
+# filter data
+mpg_manual <- mtcars[mtcars$transmission == "Manual",]$mpg
+mpg_auto <- mtcars[mtcars$transmission == "Automatic",]$mpg
+
+# perform t-test
+t.test(mpg_manual, mpg_auto, var.equal = FALSE, alternative = 'greater')
+```
+
+According to our t-test, if our null hypothesis were in fact true, that the true difference in means between cars with automatic and manual transmissions was 0, the probability of observing this data would be only 0.00069. At any reasonable alpha level, we would reject this null hypothesis in favor of the alternative hypothesis that the mean `mpg` of manual cars is greater than that of automatic cars.
+
+## Simple Linear Regression
+
+It is not really appropriate to fit a linear regression model with binary data, but as it's only a first step to building a more complicated model, it makes sense in this context.
+
+The above t-test should make us fairly confident that the answer to Question 1 is manual. In order to quantify the difference in `mpg` between automatic and manual transmission cars, we can also take a regression approach. We can have R create a linear model with `mpg` as the outcome variable and `transmission` as the predictor variable.
+
+```{r}
+# fit simple linear model
+slr <- lm(mpg ~ transmission, data = mtcars)
+summary(slr)
+```
+
+In the coefficient table, we get an estimate for the slope of cars having a manual transmission. For cars having a manual transmission, we expect on average the car to have an estimated `r round(summary(slr)$coef[2,1],2)` miles per gallon more than those with an automatic transmission. 
+
+This would be our single best answer to quantifying the difference in miles per gallon according to transmission alone. But we also want to specify the uncertainty around this estimate, and we can do this with confidence intervals.
+
+### Confidence Intervals
+
+The 95% confidence interval for the transmission coefficient suggests that, if we repeatedly collected samples of this size and constructed intervals for each sample, 95% of intervals between `r round(confint(slr)[2,1],2)` and `r round(confint(slr)[2,2],2)` would contain the true slope coefficient for having a manual transmission. Being far above 0, makes us very confident that having a manual transmission has a positive effect on mpg compared to an automatic transmission.
+
+We can also create confidence intervals of the fuel efficiency of manual and automatic cars.
+
+```{r}
+# confidence intervals for automatic and manual transmission cars
+ci_a <- predict(slr, newdata = data.frame(transmission = "Automatic"), interval = "confidence")
+ci_m <- predict(slr, newdata = data.frame(transmission = "Manual"), interval = "confidence")
+
+# arrange in a table
+ci <- data.frame(Transmission = c("Automatic", "Manual"),
+           Lower = c(ci_a[2], ci_m[2]),
+           Fit = c(ci_a[1], ci_m[1]),
+           Upper = c(ci_a[3], ci_m[3]))
+kable(ci, digits = 3, align = 'c', caption = "Simple Linear Regression: MPG Confidence Intervals")
+```
+
+This table first shows us the fit estimate, and the lower and upper bounds of a 95% confidence intervals for an automatic and manual transmission car, respectively.
+
+If we take the fit estimate of an automatic car, and add the slope coefficient of a manual transmission above, we see that this equals the estimate for a manual transmission car. We can also see that the upper bound confidence interval for `mpg` of an automatic transmission car is still below the lower bound confidence interval for `mpg` of a manual transmission car.
+
+### Prediction Intervals
+
+What if instead we wanted a prediction interval for this model?
+
+```{r}
+# prediction intervals for automatic and manual transmission cars
+pi_a <- predict(slr, newdata = data.frame(transmission = "Automatic"), interval = "predict")
+pi_m <- predict(slr, newdata = data.frame(transmission = "Manual"), interval = "predict")
+
+# arrange in a table
+pi <- data.frame(Transmission = c("Automatic", "Manual"),
+           Lower = c(pi_a[2], pi_m[2]),
+           Fit = c(pi_a[1], pi_m[1]),
+           Upper = c(pi_a[3], pi_m[3]))
+kable(pi, digits = 3, align = 'c', caption = "Simple Linear Regression: MPG Prediction Intervals")
+```
+
+While our fit estimates have not changed, our prediction intervals now have some overlap. This is because if we are building an interval to predict for a new value, there is still variability in the y (`mpg`) variable no matter how sure we are of a regression line.
+
+This also makes sense given our data. We do have cars with an automatic transmission that have greater fuel efficiency than manual transmission cars.
+
+### R^2
+
+According to our simple model, we have answered the given two questions on face value, but it does not excuse the fact that this is a pretty poor model because it ignores many other potentially confounding variables sitting in the same dataset.
+
+```{r}
+# calculate R^2
+summary(slr)$r.squared
+```
+
+Our R^2 value is only `r round(summary(slr)$r.squared,3)`, suggesting that only `r round(summary(slr)$r.squared,3) * 100`% of the total variation in fuel efficiency is explained by `transmission`.
+
+## Parallel Slopes Model
+
+We could try adding additional predictor variables to the linear model to try to determine the extent to which other variables, for instance perhaps weight, might be more influential in determining fuel efficiency. One alternative theory could be that lighter cars lead to greater fuel efficiency, and lighter cars happen to be more likely to have a manual transmission.
+
+Essentially we need a model to assess the effects of transmission choice and weight simultaneously so we can understand the effect of transmission on fuel economy after controlling for weight.
+
+In order to do this, I'll first create a parallel slopes model where one response variable is predicted with one numeric and one explanatory variable. Adding an additional variable should help us answer the above question raised in separating out the contribution to fuel efficiency imparted by the choice of transmission and a car's weight. It also has a very appealing graphical intuition.
+
+```{r}
+# parallel slopes model
+ps <- lm(mpg ~ wt + transmission, data = mtcars)
+summary(ps)
+```
+
+By adding one predictor variable, `wt`, our R^2 has gone from `r round(summary(slr)$r.squared,3)` to `r round(summary(ps)$r.squared,3)`, which broadly suggests that this is a much better model in this context.
+
+We see that `wt` is a highly significant variable, and that for every 1000 lb increase in a car's weight we expect on average a `r round(abs(coef(ps)[[2]]),2)` decrease in `mpg`.
+
+We see that the t-test comparing manual and automatic transmissions is no longer significant. In fact, the estimate is actually now very slightly negative. This model suggests essentially no difference in `mpg` between manual and automatic transmission cars once we account for `wt`. If we construct a 95% confidence interval under this model, the effect of a manual transmission would range from `r round(confint(ps)[3,1],2)` to `r round(confint(ps)[3,2],2)`, essentially equal chances of being positive or negative.
+
+If we plot the data, we can see essentially the same intercept for automatic and manual transmissions. There is a strong linear relationship between `mpg` and `wt` and the choice of transmission does not play a major role. Lighter cars more often tend to have a manual transmission, whereas heavier cars tend to be automatic. When plotting, the lines would be indistinguishable if not for varying the linetype and width of one of the lines.
+
+```{r}
+# plot parallel slopes model
+ggplot(mtcars, aes(x = wt, y = mpg, color = transmission)) +
+    geom_point() + 
+    # automatic regression line
+    geom_abline(alpha = 0.5, intercept = coef(ps)[1], 
+                slope = coef(ps)[2]) +
+    # manual regression line
+    geom_abline(alpha = 0.5, intercept = coef(ps)[1] + coef(ps)[3], 
+                slope = coef(ps)[2], lty = 2, lwd = 1.5) +
+    labs(y = "Miles Per Gallon (MPG)", x = "Weight (1000lbs)",
+         title = "Parallel Slopes: Miles Per Gallon (MPG) By Weight and Transmission")
+```
+
+If we re-assess our starting questions in light of this model, we get very different answers. Our confidence intervals for this model if we select the mean weight highlight this. Our `mpg` estimates for automatic and manual transmission cars are essentially the same, and for manual cars we need a wider confidence interval.
+
+```{r}
+# confidence intervals for automatic and manual transmission cars
+ps_ci_a <- predict(ps, newdata = data.frame(transmission = "Automatic",
+                                         wt = mean(mtcars$wt)), interval = "confidence")
+ps_ci_m <- predict(ps, newdata = data.frame(transmission = "Manual",
+                                         wt = mean(mtcars$wt)), interval = "confidence")
+
+# arrange in a table
+ps_ci <- data.frame(Transmission = c("Automatic", "Manual"),
+           Lower = c(ps_ci_a[2], ps_ci_m[2]),
+           Fit = c(ps_ci_a[1], ps_ci_m[1]),
+           Upper = c(ps_ci_a[3], ps_ci_m[3]))
+kable(ps_ci, digits = 3, align = 'c', caption = "Parallel Slopes Model: MPG Confidence Intervals")
+```
+
+In light of this model, the answer to our starting questions would be that the difference between automatic and manual transmission cars in terms of fuel efficiency is essentially 0. Focusing on transmission is the wrong way of approaching the question. Instead, one should look at the car's weight in order to predict fuel efficiency.
+
+## Interaction Model
+
+The parallel slopes model allows for different intercepts, but only one slope to explain the relationship amongst the variables. This is most likely an unnatural and definitely an unnecessary restriction. It is possible that the effect that transmission has on `mpg` varies as `wt` varies. For example, perhaps for very heavy cars the choice of transmission is inconsequential, whereas for lighter cars the choice of transmission does have an important impact on fuel economy. An interaction model will allow us to explore this possibility.
+
+```{r}
+# interaction model
+inter <- lm(mpg ~ wt + transmission + wt:transmission, data = mtcars)
+# alternatively: lm(mpg ~ wt * transmission, data = mtcars)
+summary(inter)
+```
+
+Here the first and second rows of the coefficient table are the intercept and slope for cars with an automatic transmission, respectively. The third and fourth rows, when added to their counterparts in the first and second rows, give the intercept and slope for cars with a manual transmission. 
+
+We also see that R^2 has now raised from `r round(summary(ps)$r.squared,2)` to `r round(summary(inter)$r.squared,2)` and all variables yield significant p-values, broadly suggesting that this model is an improvement over the parallel slopes model. Let's plot this model allowing for different intercepts and slopes amongst manual and automatic transmissions.
+
+```{r}
+# plot interaction model
+ggplot(mtcars, aes(y = mpg, x = wt, color = transmission)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = FALSE) +
+    labs(y = "Miles Per Gallon (MPG)", x = "Weight (1000lbs)",
+         title = "Interactive Model: Miles Per Gallon (MPG) By Weight and Transmission")
+```
+
+By default, R only draws the linear model through the respective range of data, and so we also see here that there is a clear difference in the typical weight of cars by transmission.
+
+In this model, we can also see that the decrease in fuel efficiency amongst manual transmission cars as weight increases is sharper than that for automatic transmission cars. But we can see that because manual transmission cars tend to be much lighter than automatic transmission cars there is somewhat little overlap in our data.
+
+Given our interest in `transmission`, we are more interested in the model intercepts in this case. We see that our answer to the starting question of whether automatic or manual transmission is better for `mpg` depends on knowing the `wt` of the car. According to this interaction model, a car weighing less than approximately 2800 lbs would be expected to have a greater fuel efficiency if it had a manual transmission. However, for a car greater than 2800 lbs, we would expect cars with automatic transmissions to have a higher `mpg` than cars with manual transmissions.
+
+This difference is difficult to quantify with a single number because it changes depending upon the weight. We would expect a large difference in favor of manual transmission cars at very low weights and in favor of automatic cars at very high weights. However, we can examine the difference at the mean car weight of `r round(mean(mtcars$wt)*1000,0)` lbs and build a confidence interval around this point.
+
+```{r}
+# confidence intervals for automatic and manual transmission cars
+inter_ci_a <- predict(inter, 
+                      newdata = data.frame(transmission = "Automatic",
+                                         wt = mean(mtcars$wt)),
+                      interval = "confidence")
+inter_ci_m <- predict(inter, 
+                      newdata = data.frame(transmission = "Manual",
+                                         wt = mean(mtcars$wt)),
+                      interval = "confidence")
+
+# arrange in a table
+inter_ci <- data.frame(Transmission = c("Automatic", "Manual"),
+           Lower = c(inter_ci_a[2], inter_ci_m[2]),
+           Fit = c(inter_ci_a[1], inter_ci_m[1]),
+           Upper = c(inter_ci_a[3], inter_ci_m[3]))
+kable(inter_ci, digits = 3, align = 'c', caption = "Interaction Model: MPG Confidence Intervals at Mean Weight")
+```
+
+We see that, according to this interaction model, at the mean car weight, we expect a car with an automatic transmission to have a little more than 2 miles per gallon in fuel efficiency over a car with a manual transmission. So overall the parallel slopes and interaction models were a good example as to how adding even one additional predictor variable can completely change our understanding of how two variables are related.
+
+## Multivariable Regression
+
+The parallel slopes and interaction models are useful, particularly for their graphical intuition, but now let's try adding even more variables that could help explain the relationship behind `mpg` and `transmission`. At the same time, we want our model to remain parsimonious and highly interpretable so we need to be wary of multicollinearity amongst our predictor variables.
+
+A matrix of scatterplots can help give us a sense of what other variables might be useful in predicting `mpg`.
+
+```{r}
+# scatterplot matrix
+ggpairs(mtcars, columns = 1:7, lower = list(continuous = wrap("smooth", method = "lm")))
+```
+
+The first column of the matrix shows strong linear relationships between `mpg` and a number of variables, besides weight. 
+
+* Cars with a fewer number of cylinders are associated with higher `mpg`.
+
+* Cars with a smaller `disp`, a smaller engine size, are closely associated with higher `mpg`. 
+
+* Cars with lower `hp`, horsepower, are associated with higher `mpg`. 
+
+* Cars with a higher `drat`, real axle ratio, are associated with higher `mpg`.
+
+* Cars with slower `qsec`, quarter mile times, are associated with higher `mpg`.
+
+Because there are a great deal of seemingly good variables to add to the model, I want to be systematic about it. I'll adopt a backwards elimination method, using p-value as the decision criteria.
+
+```{r}
+# remove added variables
+mtcars0 <- select(mtcars, -mean_mpg, -am)
+
+# start with the full model
+mod_full <- lm(mpg ~ ., data = mtcars0)
+summary(mod_full)
+```
+
+Now remove variables one at a time, starting with the highest p-value, until no variable has a p-value greater than 0.05.
+
+```{r}
+# least significant variable
+tail(cbind(sort(summary(mod_full)$coefficients[,4])),1)
+```
+```{r}
+# drop least significant variable
+mod1 <- lm(mpg ~ . -cyl, data = mtcars0)
+# least significant variable
+tail(cbind(sort(summary(mod1)$coefficients[,4])),1)
+```
+```{r}
+# drop least significant variable
+mod2 <- lm(mpg ~ . -cyl -vs, data = mtcars0)
+# least significant variable
+tail(cbind(sort(summary(mod2)$coefficients[,4])),1)
+```
+```{r}
+# drop least significant variable
+mod3 <- lm(mpg ~ . -cyl -vs -carb, data = mtcars0)
+# least significant variable
+tail(cbind(sort(summary(mod3)$coefficients[,4])),1)
+```
+```{r}
+# drop least significant variable
+mod4 <- lm(mpg ~ . -cyl -vs -carb -gear, data = mtcars0)
+# least significant variable
+tail(cbind(sort(summary(mod4)$coefficients[,4])),1)
+```
+```{r}
+# drop least significant variable
+mod5 <- lm(mpg ~ . -cyl -vs -carb -gear -drat, data = mtcars0)
+# least significant variable
+tail(cbind(sort(summary(mod5)$coefficients[,4])),1)
+```
+```{r}
+# drop least significant variable
+mod6 <- lm(mpg ~ . -cyl -vs -carb -gear -drat -disp, data = mtcars0)
+# least significant variable
+tail(cbind(sort(summary(mod6)$coefficients[,4])),1)
+```
+```{r}
+# drop least significant variable
+mod7 <- lm(mpg ~ . -cyl -vs -carb -gear -drat -disp -hp, 
+           data = mtcars0)
+# least significant variable
+tail(cbind(sort(summary(mod7)$coefficients[,4])),2)
+```
+
+Using this method, our final model retains the variables `wt`, `transmission` and `qsec`. I'll rename it `mvr`.
+
+```{r}
+# final multivariable regression model
+mvr <- lm(mpg ~ wt + qsec + transmission, data = mtcars)
+summary(mvr)
+```
+
+From a full model that started with an R^2 of `r round(summary(mod_full)$r.squared,2)`, we settled on a final model with only three predictor variables and an R^2 of `r round(summary(mvr)$r.squared,2)`. This seems like quite a parsimonious result. 
+
+Under this model, we expect a car with a manual transmission to have a `mpg` rating `r round(summary(mvr)$coef[4,1],2)` higher than a car with an automatic transmission. Our 95% confidence interval around this estimate goes from `r round(confint(mvr)[4,1],2)` to `r round(confint(mvr)[4,2],2)`-- all positive values.
+
+We can center this model for more interpretable intercepts.
+
+```{r}
+# mvr centered
+mvrc <- lm(mpg ~ I(wt - mean(wt)) + I(qsec - mean(qsec)) +
+               transmission, data = mtcars)
+summary(mvrc)$coef
+```
+
+Our model expects a car with a mean weight, mean quarter mile time (`qsec`) and an automatic transmission to have an `mpg` rating of `r round(summary(mvrc)$coef[1,1],2)`. The same car with a manual transmission is expected to have an `mpg` of `r round(summary(mvrc)$coef[1,1] + summary(mvrc)$coef[4,1],2)`.
+
+We can see this difference more formally with a confidence interval for `mpg` given mean weights and quarter mile times for automatic and manual transmission cars, respectively.
+
+```{r}
+# confidence intervals for automatic and manual transmission cars
+mvr_ci_a <- predict(mvr, 
+                      newdata = data.frame(transmission = "Automatic",
+                                         wt = mean(mtcars$wt),
+                                         qsec = mean(mtcars$qsec)),
+                      interval = "confidence")
+mvr_ci_m <- predict(mvr, 
+                      newdata = data.frame(transmission = "Manual",
+                                         wt = mean(mtcars$wt),
+                                         qsec = mean(mtcars$qsec)),
+                      interval = "confidence")
+
+# arrange in a table
+mvr_ci <- data.frame(Transmission = c("Automatic", "Manual"),
+           Lower = c(mvr_ci_a[2], mvr_ci_m[2]),
+           Fit = c(mvr_ci_a[1], mvr_ci_m[1]),
+           Upper = c(mvr_ci_a[3], mvr_ci_m[3]))
+kable(mvr_ci, digits = 3, align = 'c', caption = "Multivariable Model: MPG Confidence Intervals at Mean Weight and Quarter Mile Times")
+```
+
+### Parsimony Check
+
+With regression models, our aim is typically parsimony rather than the accurate prediction of a machine learning model.
+
+A model including `wt`, `qsec`, and `transmission` seems like a parsimonious result. Each variable, we could argue, is contributing a different piece of information, helping us understand `mpg`. While the scatterplot matrix showed many variables sharing a linear relationship with `mpg`, we should notice that the variables in our final model are not correlated with each other. `wt` and `qsec` have a very weak correlation (`r round(cor(mtcars$qsec, mtcars$wt),2)`), as confirmed by their scatterplot below.
+
+```{r}
+# plot wt and qsec
+ggplot(mtcars, aes(x = wt, y = qsec)) + 
+    geom_point() + geom_smooth(method = "lm")
+```
+
+This gives us a final model we can easily interpret: loosely, `mpg` is a function of `wt` (heavier cars lead to worse `mpg`), `qsec` (cars with fast quarter mile times suffer in terms of `mpg`), and `transmission` (a manual transmission should add a few extra `mpg`). Each variable in our model has some intuitive value.
+
+### Nested Likelihood Ratio Test
+
+Now that we have found a model that seems to have some value, we can try out a few comparisons. The nested likelihood ratio test is a good option because we have one parameter of interest (`mpg`), one explanatory variable we know we want to include (`transmission`) and just a few possible additional variables we want to compare. This approach allows us to repeat our previous steps (starting with just `transmission`, adding `wt`, lastly adding `qsec`) and then trying a few different final variables.
+
+```{r}
+fit1 <- lm(mpg ~ transmission, data = mtcars) # slr
+fit2 <- update(fit1, mpg ~ wt + transmission) # parallel slopes
+fit3 <- update(fit2, mpg ~ wt + qsec + transmission) # mvr
+fit4 <- update(fit3, mpg ~ wt + qsec + transmission + hp) # new
+anova(fit1, fit2, fit3, fit4)
+```
+
+If we are in fact sure about our first three predictor variables (`wt`, `transmission`, and `qsec`), then this test is useful in telling us that we should not add anymore. I tried adding not only `hp` but all other possible variables and the test shows a non-significant p-value for the fourth fit in all cases. Essentially, the added variance that this extra variable would introduce would not be worth it.
+
+## Model Checks and Diagnostics
+
+As this is our final model, I wanted to perform model diagnostics more formally than for the previous models. There are a number of important diagnostic tests we can use to evaluate the appropriateness of our model. During model selection, if we omit important variables, we introduce bias to the model. On the other hand, by including unnecessary variables, we inflate standard errors of other regressors. Although this is a tried and tested dataset, we would normally want to examine possible outliers and any outsized influence they may have on the model.
+
+### Residual Standard Error
+
+Residual standard error is one measure of the quality of a linear regression fit. The Residual Standard Error is the average amount that the response (`mpg`) will deviate from the true regression line.
+As we would hope, our residual standard error gets smaller with each successive model that we built.
+
+```{r}
+# calculate residual standard error for each model
+rse <- data.frame(
+    Model = c("lm(mpg ~ transmission)", 
+              "lm(mpg ~ wt + transmission)", 
+              "lm(mpg ~ wt * transmission)", 
+              "lm(mpg ~ wt + qsec + transmission)"),
+    Residual_Standard_Error = c(sigma(slr),sigma(ps),sigma(inter),sigma(mvr)))
+
+kable(rse, digits = 3, align = 'c', caption = "Residual Standard Errors of Competing Models")
+```
+
+### Default Diagnostic Plots
+
+R quickly gives us the following four residual diagnostic plots.
+
+```{r}
+# diagnostic plots
+par(mfrow = c(2,2))
+plot(mvr)
+```
+
+In the top left, the simplest diagnostic plot displays residuals versus fitted values. Residuals should be uncorrelated with the fit, independent and (almost) identically distributed with mean zero. We do not see any clear pattern in the residuals so this is a good sign. They are scattered randomly.
+
+In the top right, we see the normal quantile plot, which checks whether the residuals are normally distributed (an assumption of our linear regression model). Looking at the plot, there are some small deviations but it looks approximately normal.
+
+In the bottom left, the scale-location plot shows the square root of standardized residuals against fitted values. It indicates the spread of points across predicted values range. Because of our assumption of homoscedasticity, we hope to see a horizontal red line indicating the residuals have a uniform variance. Here we do see a positive trend so this may be violated.
+
+The bottom right plot measures the influence of each observation on the regression coefficients with Cook's distance. Point 17, the Lincoln Continental, has the most influence, but it's not extreme and we know of no reason why it should be excluded. 
+
+### dfbeta
+
+A tried and tested dataset like the `mtcars` dataset has little risk of problematic outliers, but we can still check. The `dfbeta` function, when applied to our model, will test the difference in our slope coefficients when each observation is included or excluded from the model. Here we want to check if the magnitude of difference of any one particular point stands out as having too much influence.
+
+```{r}
+# calculate dfbeta
+round(dfbeta(mvr),2)
+```
+
+Point 17, the Lincoln Continental, appears to be the most influential, but I don't think it's too much cause for concern. It still fits into our population of cars.
+
+### Hat Values
+
+The `hatvalues` function compares ratio of residuals including and excluding a point. Influential observations will score closer to 1 and the least influential observations will be close to 0.
+
+Looking at the ten most influential observations given this metric, we see that even the most influential observation is not too different from many other observations so this test has not raised any serious concerns.
+
+```{r}
+# calculate hatvalues
+head(cbind(sort(hatvalues(mvr), decreasing = TRUE)), 10)
+```
+
+### Variance Inflation Factor
+
+The Variance Inflation Factor (VIF) is a way to test the severity of multicollinearity in the predictor variables. The VIF is the increase in variance for the nth regressor compared to the ideal setting where it is orthogonal to the other regressors. The square root of the VIF indicates how much larger the standard error is, compared with what it would be if that variable were uncorrelated with the other predictor variables in the model.
+
+```{r}
+# calculate VIF
+sqrt(vif(mvr))
+```
+
+For example, the standard error for the coefficient of `wt` is 1.58 times as large as it would be if that predictor variable were uncorrelated with the other predictor variables. These values seem reasonable and increase a good deal if we add more variables. For example if we added `disp`:
+
+```{r}
+# calculate VIF with disp
+sqrt(vif(lm(mpg ~ wt + qsec + transmission + disp, data = mtcars)))
+```
+
+## Automated Model Selection
+
+Although not covered in this course, I wanted to make a quick comparison of the model we created versus some automated techniques relying on AIC. 
+
+### Stepwise Backward Elimination
+
+First I'll do stepwise backward elimination.
+
+```{r}
+# stepwise backward elimination
+step(lm(mpg ~ ., data = mtcars0), direction = 'backward')
+```
+
+Stepwise backwards elimination yielded the same model we achieved, predicting `mpg` from `wt`, `qsec` and `transmission`.
+
+### Stepwise Forward Direction
+
+I'll specify the scope to be the full model and start at the empty model. 
+
+```{r}
+# stepwise forward
+fitfull <- lm(mpg ~ ., data = mtcars0)
+fitstart <- lm(mpg ~ 1, data = mtcars0)
+step(fitstart, direction = "forward", scope = formula(fitfull))
+```
+
+Interestingly, forward selection gave a very different model, excluding `transmission` (which we wanted to investigate) and including `cyl` and `hp`.
+
+### Stepwise in Both Directions
+
+Now I'll set the direction parameter to 'both'.
+
+```{r}
+# stepwise both
+step(lm(mpg ~ ., data = mtcars0), direction = 'both')
+```
+
+This approach yielded the same model as backwards elimination with AIC as the decision criteria and our own model arrived at through backwards elimination with p-value as the decision criteria.
